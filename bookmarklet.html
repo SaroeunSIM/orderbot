@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Menu bookmark — Order Bot</title>
+<style>
+  body { margin: 0; font: 15px/1.55 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; background: #f5f5f7; color: #111; }
+  main { max-width: 620px; margin: 32px auto; padding: 24px 28px; background: #fff; border-radius: 16px; border: 1px solid #e5e5ea; }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  .bm { display: inline-block; margin: 14px 0; padding: 10px 16px; border-radius: 10px; background: #111; color: #fff; text-decoration: none; font-weight: 600; cursor: grab; }
+  ol li { margin-bottom: 6px; }
+  textarea { width: 100%; height: 90px; font: 12px ui-monospace, monospace; border: 1px solid #d2d2d7; border-radius: 10px; padding: 8px; box-sizing: border-box; }
+  .muted { color: #6e6e73; font-size: 14px; }
+  button { padding: 8px 12px; border: 1px solid #d2d2d7; background: #fff; border-radius: 8px; font: inherit; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Send menu to Order Bot</h1>
+  <p>This bookmark copies a shop's menu — items, prices, photos, sold-out marks and (on E-Get) options — from the shop's web page into your Order Bot, so the team can pick from it in Telegram.</p>
+  <h3>Install (once, on your laptop)</h3>
+  <ol>
+    <li>Show the bookmarks bar: <b>Ctrl+Shift+B</b> (Windows) or <b>Cmd+Shift+B</b> (Mac).</li>
+    <li>Drag this button onto the bookmarks bar:<br><a class="bm" id="bm" href="#">📋 Send menu to Order Bot</a></li>
+  </ol>
+  <p class="muted">Can't drag? Right-click the bookmarks bar → <b>Add page…</b>, name it <i>Send menu to Order Bot</i>, and paste this as the URL:</p>
+  <textarea id="code" readonly></textarea>
+  <button id="copy">Copy</button>
+  <h3>Use</h3>
+  <ol>
+    <li>Open the shop's share link in Chrome (from Grab or E-Get → Share → Copy link). It opens the shop's web page.</li>
+    <li>Click <b>📋 Send menu to Order Bot</b>. Wait while it reads the menu — about 10 seconds on Grab, up to a minute on E-Get (it opens each item's options).</li>
+    <li>Press <b>Send to Order Bot</b>, enter your API token on the page that opens (first time only), then <b>Import</b>.</li>
+  </ol>
+  <p class="muted">Re-run it whenever prices or promotions change. It only reads what your own browser is showing; nothing is sent until you press Import.</p>
+</main>
+<script type="text/plain" id="src">/*
+ * Order Bot — menu reader.
+ * Runs as a bookmark on a shop page you have open (GrabFood web or E-GetS web).
+ * Reads what the page shows — categories, items, prices, photos, sold-out marks,
+ * and on E-Get the item options — then hands it to your import page.
+ * Nothing is sent anywhere until you press "Send to Order Bot".
+ *
+ * __IMPORT_URL__ is filled in by bookmarklet.html.
+ */
+(async function () {
+  var IMPORT_URL = '__IMPORT_URL__';
+  if (window.__obReading) return;
+  window.__obReading = true;
+
+  var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  var txt = function (el) { return el ? String(el.textContent || '').replace(/\s+/g, ' ').trim() : ''; };
+  var visible = function (el) { return !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length)); };
+  var num = function (s) { var n = parseFloat(String(s || '').replace(/[^0-9.]/g, '')); return isNaN(n) ? '' : n; };
+
+  // ---- progress box -------------------------------------------------------
+  var box = document.createElement('div');
+  box.style.cssText = 'position:fixed;z-index:2147483647;top:16px;right:16px;width:300px;padding:14px 16px;' +
+    'background:#fff;color:#111;border:1px solid #ccc;border-radius:12px;font:14px/1.45 system-ui,sans-serif;' +
+    'box-shadow:0 6px 24px rgba(0,0,0,.18)';
+  box.innerHTML = '<b>Order Bot</b><div id="obmsg" style="margin-top:6px">Reading the menu…</div>';
+  document.body.appendChild(box);
+  var say = function (h) { box.querySelector('#obmsg').innerHTML = h; };
+  var done = function () { window.__obReading = false; };
+
+  try {
+    var host = location.host;
+    var data;
+    if (/grab\.com$/.test(host)) data = await readGrab();
+    else if (/e-gets\.com$/.test(host)) data = await readEget();
+    else { say('Open a shop page on <b>food.grab.com</b> or <b>e-gets.com</b> first (open the share link in Chrome).'); done(); return; }
+
+    if (!data.items.length) { say('No menu items found on this page. Scroll to the menu and try again.'); done(); return; }
+
+    var sold = data.items.filter(function (i) { return !i.available; }).length;
+    var opts = data.items.filter(function (i) { return i.options && i.options.length; }).length;
+    say('<b>' + esc(data.shop_name) + '</b><br>' + data.items.length + ' items · ' +
+        Object.keys(data.items.reduce(function (a, i) { a[i.category] = 1; return a; }, {})).length + ' categories' +
+        (opts ? ' · ' + opts + ' with options' : '') + (sold ? ' · ' + sold + ' sold out' : '') +
+        '<br><button id="obsend" style="margin-top:10px;width:100%;padding:9px;border:0;border-radius:8px;' +
+        'background:#111;color:#fff;font:inherit;cursor:pointer">Send to Order Bot</button>' +
+        '<div style="margin-top:6px;text-align:right"><a href="#" id="obclose" style="color:#666">Close</a></div>');
+    box.querySelector('#obsend').onclick = function () {
+      window.open(IMPORT_URL + '#' + encodeURIComponent(JSON.stringify(data)), '_blank');
+      say('Sent to the import page — finish there. ✓');
+      setTimeout(function () { box.remove(); }, 4000);
+      done();
+    };
+    box.querySelector('#obclose').onclick = function (e) { e.preventDefault(); box.remove(); done(); };
+  } catch (err) {
+    say('Something went wrong: ' + esc(String(err && err.message || err)));
+    done();
+  }
+
+  function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
+
+  // ---- GrabFood web (food.grab.com) -----------------------------------------
+  async function readGrab() {
+    // Photos load as you scroll; walk the page once so every image has its real address.
+    var h = document.body.scrollHeight;
+    for (var y = 0; y < h; y += 600) { window.scrollTo(0, y); await sleep(180); say('Reading the menu… ' + Math.min(99, Math.round(y / h * 100)) + '%'); }
+    window.scrollTo(0, 0);
+
+    var q = function (root, k) { return root.querySelector('[class*="' + k + '"]'); };
+    var name = txt(document.querySelector('h1')) || document.title.replace(/\s*⭐.*$/, '');
+    var items = {}, order = [];
+    document.querySelectorAll('[class*="categoryContent"]').forEach(function (cc) {
+      var head = cc.parentElement && cc.parentElement.querySelector('h2[class*="categoryName"]');
+      var cat = txt(head) || 'Menu';
+      cc.querySelectorAll('[class*="menuItem___"]').forEach(function (mi) {
+        var n = txt(q(mi, 'itemNameTitle'));
+        if (!n) return;
+        var key = n.toLowerCase();
+        if (items[key] && /for you|recommended|popular/i.test(cat)) return;     // keep the real category
+        var priceTxt = txt(q(mi, 'discountedPrice'));
+        var origEl = mi.querySelector('[class*="itemPrice"] del, [class*="originalPrice"], [class*="originPrice"]');
+        var img = mi.querySelector('img');
+        var cur = /\$/.test(priceTxt) ? 'USD' : (/\/kh\//.test(location.pathname) ? 'KHR' : 'USD');
+        if (!items[key]) order.push(key);
+        items[key] = {
+          category: cat, name: n, desc: txt(q(mi, 'itemDescription')),
+          price: num(priceTxt), was: origEl ? num(txt(origEl)) : '', currency: cur,
+          image: img ? (img.currentSrc || img.src || '') : '',
+          available: !/disable/i.test(String(mi.className)), options: []
+        };
+      });
+    });
+    return { v: 1, app: 'Grab', shop_name: name, page_url: location.origin + location.pathname,
+             read_at: new Date().toISOString(), items: order.map(function (k) { return items[k]; }) };
+  }
+
+  // ---- E-GetS web (takeaway.e-gets.com) -------------------------------------
+  async function readEget() {
+    var title = document.title.match(/\[(.+?)\]/);
+    var name = title ? title[1] : txt(document.querySelector('.shop-name, h1, h2'));
+    var tabs = [].slice.call(document.querySelectorAll('.van-tabs__nav .van-tab'));
+    var items = {}, order = [];
+
+    for (var ti = 0; ti < tabs.length; ti++) {
+      var cat = txt(tabs[ti]);
+      say('Reading “' + esc(cat) + '” (' + (ti + 1) + '/' + tabs.length + ')…');
+      tabs[ti].click();
+      await sleep(900);
+      var pane = document.querySelectorAll('.van-tab__pane')[ti];
+      if (!pane) continue;
+      for (var k = 0; k < 15; k++) {                    // the list loads more as you scroll
+        var list = pane.querySelectorAll('.goods-item'), before = list.length;
+        if (list.length) list[list.length - 1].scrollIntoView();
+        await sleep(450);
+        if (pane.querySelectorAll('.goods-item').length === before) break;
+      }
+      var promoCat = /promo/i.test(cat);
+      [].forEach.call(pane.querySelectorAll('.goods-item'), function (g) {
+        var n = txt(g.querySelector('.goods-title'));
+        if (!n) return;
+        var key = n.toLowerCase();
+        if (items[key] && (promoCat || !/promo/i.test(items[key].category))) return;
+        var sym = txt(g.querySelector('.symbol-money'));
+        var price = num(txt(g.querySelector('.main-money')) + txt(g.querySelector('.digit-money')));
+        var img = g.querySelector('img.van-image__img');
+        var soldOut = [].some.call(g.querySelectorAll('p'), function (p) { return txt(p) === 'Sold Out' && visible(p); });
+        if (!items[key]) order.push(key);
+        items[key] = {
+          category: cat, name: n, desc: txt(g.querySelector('.goods-small-title')),
+          price: price, was: num(txt(g.querySelector('del'))), currency: /៛|riel/i.test(sym) ? 'KHR' : 'USD',
+          image: img ? (img.dataset.src || img.currentSrc || img.src || '') : '',
+          available: !soldOut, options: [], _el: /SELECT/.test(g.textContent) ? g : null
+        };
+      });
+    }
+
+    // Options (size, sugar level, toppings…) live behind each item's SELECT button.
+    var withOpts = order.filter(function (k) { return items[k]._el; });
+    for (var i = 0; i < withOpts.length; i++) {
+      var it = items[withOpts[i]];
+      say('Reading options ' + (i + 1) + '/' + withOpts.length + ' — ' + esc(it.name));
+      try {
+        var tabEl = tabs.filter(function (t) { return txt(t) === it.category; })[0];
+        if (tabEl && !document.body.contains(it._el)) { tabEl.click(); await sleep(700); }
+        var btn = [].filter.call(it._el.querySelectorAll('*'), function (e) { return !e.children.length && txt(e) === 'SELECT'; })[0];
+        if (!btn) continue;
+        btn.click();
+        var pop = null;
+        for (var w = 0; w < 10 && !pop; w++) {
+          await sleep(200);
+          pop = [].filter.call(document.querySelectorAll('.goods-sku-pop'), visible)[0];
+        }
+        if (!pop) continue;
+        it.options = [].map.call(pop.querySelectorAll('.sku-type'), function (grp) {
+          return {
+            group: txt(grp.querySelector('h5')),
+            multi: /checkbox/.test(grp.className),
+            choices: [].map.call(grp.querySelectorAll('.van-cell__title'), txt).filter(Boolean)
+          };
+        }).filter(function (g) { return g.group && g.choices.length; });
+        var x = pop.querySelector('.van-popup__close-icon');
+        if (x) x.click();
+        await sleep(350);
+        [].forEach.call(document.querySelectorAll('.shop-closed-box'), function (b) {   // "Store closed" notice
+          if (visible(b)) { var ok = b.querySelector('.van-button'); if (ok) ok.click(); }
+        });
+      } catch (e) { /* skip this item's options */ }
+    }
+
+    return { v: 1, app: 'E-Get', shop_name: name, page_url: location.href.replace(/[?&](share|s_id|lang|region_code)=[^&]*/g, ''),
+             read_at: new Date().toISOString(),
+             items: order.map(function (k) { var it = items[k]; delete it._el; return it; }) };
+  }
+})();
+</script>
+<script>
+(function () {
+  var src = document.getElementById('src').textContent;
+  var importUrl = location.href.replace(/[^/]*([?#].*)?$/, '') + 'import.html';
+  src = src.replace(/__IMPORT_URL__/g, importUrl)
+    .replace(/\/\*[\s\S]*?\*\//g, '')            // block comments
+    .replace(/^\s*\/\/.*$/gm, '')                  // whole-line comments
+    .replace(/\s{2,}\/\/ .*$/gm, '')               // trailing comments
+    .replace(/^\s+/gm, '')
+    .replace(/\n{2,}/g, '\n');
+  var href = 'javascript:' + encodeURIComponent(src);
+  document.getElementById('bm').href = href;
+  document.getElementById('bm').onclick = function (e) { e.preventDefault(); alert('Drag this button to your bookmarks bar — clicking it here does nothing.'); };
+  document.getElementById('code').value = href;
+  document.getElementById('copy').onclick = function () {
+    var t = document.getElementById('code'); t.select(); document.execCommand('copy'); this.textContent = 'Copied ✓';
+  };
+})();
+</script>
+</body>
+</html>
