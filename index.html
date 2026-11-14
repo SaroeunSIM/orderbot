@@ -70,6 +70,13 @@
   .toast { position: fixed; left: 16px; right: 16px; bottom: 110px; background: #333; color: #fff; padding: 10px 14px; border-radius: 10px; z-index: 50; font-size: 14px; }
   .skel { height: 64px; margin: 10px 16px; border-radius: 10px; background: var(--bg2); }
   .hidden { display: none !important; }
+  .busy { position: fixed; inset: 0; z-index: 60; background: var(--bg); display: flex; flex-direction: column;
+          align-items: center; justify-content: center; padding: 24px; text-align: center; }
+  .spin { width: 44px; height: 44px; border-radius: 50%; border: 4px solid var(--bg2); border-top-color: var(--btn);
+          animation: spin .8s linear infinite; margin-bottom: 18px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .busy .lines { margin-top: 10px; color: var(--hint); font-size: 14px; }
+  .busy .slow { margin-top: 18px; color: var(--hint); font-size: 13px; opacity: 0; transition: opacity .4s; }
 </style>
 </head>
 <body>
@@ -211,7 +218,7 @@
         var v = inp.value.trim();
         if (!v) return;
         S.cart.push({ item: v, qty: 1, custom: true, price: 0 });
-        inp.value = ''; haptic(); drawBar();
+        inp.value = ''; haptic(); drawBar(); toast('Added ✓');
       } }))));
 
     if (d.mode === 'open') {
@@ -297,7 +304,7 @@
       });
       line.opts = extra.join(', ');
       S.cart.push(line);
-      haptic(); bg.remove(); drawBar();
+      haptic(); bg.remove(); drawBar(); toast('Added ✓ — tap Send order when you\'re done');
     };
     label();
     document.body.appendChild(bg);
@@ -323,14 +330,30 @@
       onclick: function () { send(false); } }));
   }
 
+  /*
+   * The server needs 2–4 seconds. Cover the screen straight away so it's clear
+   * something is happening and nothing can be tapped twice.
+   */
+  function busy(title, lines) {
+    var slow = h('div', { cls: 'slow', text: 'Still working — Google is waking up the bot. One moment…' });
+    var el = h('div', { cls: 'busy' }, h('div', { cls: 'spin' }), h('h1', { text: title }),
+      lines && lines.length ? h('div', { cls: 'lines', text: lines.map(lineText).join(' + ') }) : null, slow);
+    document.body.appendChild(el);
+    var t = setTimeout(function () { slow.style.opacity = 1; }, 4500);
+    return function () { clearTimeout(t); el.remove(); };
+  }
+
   function send(skip) {
     if (S.sending) return;
     if (!skip && !S.cart.length) return toast('Add something first.');
-    S.sending = true; drawBar();
+    S.sending = true;
+    haptic();
+    var stop = busy(skip ? 'Skipping today…' : S.data.mode === 'late' ? 'Sending for approval…' : 'Sending your order…', skip ? [] : S.cart);
     api({ op: 'submit', skip: !!skip, lines: S.cart.map(function (l) {
       return { id: l.id || '', item: l.item, qty: l.qty || 1, sugar: l.sugar, ice: l.ice, opts: l.opts, note: l.note, custom: !!l.custom };
     }) }).then(function (r) {
       S.sending = false;
+      stop();
       if (!r.ok) { drawBar(); haptic(); return toast(r.error || 'Could not send — try again.'); }
       haptic('ok');
       try { localStorage.removeItem(cacheKey()); } catch (e) {}
@@ -339,7 +362,7 @@
         skip ? 'Skipping today' : r.status === 'late' ? 'Sent for approval' : 'Order saved',
         skip ? '' : r.text + (r.status === 'ordered' && S.data.mode === 'open' ? ' — you can change it until ' + r.cutoff + '.' : ''),
         h('button', { cls: 'btn', text: 'Done', onclick: function () { tg ? tg.close() : history.back(); } }));
-    }).catch(function () { S.sending = false; drawBar(); toast('No connection — try again.'); });
+    }).catch(function () { S.sending = false; stop(); drawBar(); toast('No connection — nothing was sent. Try again.'); });
   }
 })();
 </script>
