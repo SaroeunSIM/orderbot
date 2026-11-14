@@ -1,6 +1,6 @@
 /*
  * Order Bot — menu reader.
- * Runs as a bookmark on a shop page you have open (GrabFood web or E-GetS web).
+ * Runs as a bookmark on a shop page you have open (GrabFood, E-GetS or WOWNOW web).
  * Reads what the page shows — categories, items, prices, photos, sold-out marks,
  * and on E-Get the item options — then hands it to your import page.
  * Nothing is sent anywhere until you press "Send to Order Bot".
@@ -32,7 +32,8 @@
     var data;
     if (/grab\.com$/.test(host)) data = await readGrab();
     else if (/e-gets\.com$/.test(host)) data = await readEget();
-    else { say('Open a shop page on <b>food.grab.com</b> or <b>e-gets.com</b> first (open the share link in Chrome).'); done(); return; }
+    else if (/wownow\.net$/.test(host)) data = await readWownow();
+    else { say('Open a shop page on <b>food.grab.com</b>, <b>e-gets.com</b> or <b>wownow.net</b> first (open the share link in Chrome).'); done(); return; }
 
     if (!data.items.length) { say('No menu items found on this page. Scroll to the menu and try again.'); done(); return; }
 
@@ -90,6 +91,53 @@
       });
     });
     return { v: 1, app: 'Grab', shop_name: name, page_url: location.origin + location.pathname,
+             read_at: new Date().toISOString(), items: order.map(function (k) { return items[k]; }) };
+  }
+
+  // ---- WOWNOW web (fd.wownow.net) ---------------------------------------------
+  // The menu is a scrolling panel that only draws what's on screen, so we scroll
+  // it top to bottom and collect items as they appear. Section titles sit in the
+  // same list as the items; menus list promotions first and the real categories
+  // later, so the last section an item appears in is kept.
+  async function readWownow() {
+    var wrap = document.querySelector('.store-item-wrapper');
+    if (!wrap) return { items: [] };
+    var sc = wrap;
+    while (sc && !(sc.scrollHeight > sc.clientHeight + 50 && /auto|scroll/.test(getComputedStyle(sc).overflowY))) sc = sc.parentElement;
+    var nameEl = [].filter.call(document.querySelectorAll('h5'), function (h) { return !h.closest('.store-item-product'); })[0];
+    var items = {}, order = [], cat = 'Menu';
+    var collect = function () {
+      [].forEach.call(wrap.children, function (c) {
+        var p = c.querySelector('.store-item-product');
+        if (!p) { var t = txt(c); if (t) cat = t.substring(0, 60); return; }
+        var n = txt(p.querySelector('h5'));
+        if (!n) return;
+        var key = n.toLowerCase();
+        var img = p.querySelector('img.show-img');
+        var priceEl = [].filter.call(p.querySelectorAll('strong'), function (e) { return /\$/.test(txt(e)); })[0] ||
+                      p.querySelector('strong');
+        var priceTxt = txt(priceEl);
+        if (!items[key]) order.push(key);
+        var prev = items[key];
+        items[key] = {
+          category: cat, name: n, desc: '',
+          price: num(priceTxt), was: num(txt(p.querySelector('.lineThrough'))),
+          currency: /\$/.test(priceTxt) ? 'USD' : 'KHR',
+          image: (img && /^https?:/.test(img.currentSrc || img.src) ? (img.currentSrc || img.src) : '') || (prev && prev.image) || '',
+          available: !/sold out|out of stock|unavailable/i.test(p.textContent), options: []
+        };
+      });
+    };
+    if (sc) {
+      for (var y = 0; y <= sc.scrollHeight; y += 400) {
+        sc.scrollTop = y; await sleep(260); collect();
+        say('Reading the menu… ' + Math.min(99, Math.round(y / sc.scrollHeight * 100)) + '%');
+      }
+      sc.scrollTop = 0;
+    } else collect();
+    var storeNo = (location.search.match(/storeNo=([^&]+)/) || [])[1];
+    return { v: 1, app: 'WOWNOW', shop_name: txt(nameEl) || 'WOWNOW shop',
+             page_url: location.origin + location.pathname + (storeNo ? '?storeNo=' + storeNo : ''),
              read_at: new Date().toISOString(), items: order.map(function (k) { return items[k]; }) };
   }
 
