@@ -85,6 +85,27 @@
   .item.hid { opacity: .45; }
   .tog { flex: none; border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 99px; padding: 6px 12px; font: inherit; font-size: 13px; }
   .tog.hide { color: #c0392b; }
+  .form { padding: 4px 16px 8px; }
+  .fl { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .fl > span { flex: 1; }
+  .fl input[type=time], .fl input[type=number], .fl select, .fl input[type=text], .fl input[type=date] {
+    padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg2); color: var(--text); font: inherit; }
+  .fl input[type=number] { width: 80px; }
+  .fl input[type=text].wide { flex: 1.4; min-width: 0; }
+  .sw { position: relative; width: 48px; height: 28px; flex: none; }
+  .sw input { opacity: 0; width: 0; height: 0; }
+  .sw i { position: absolute; inset: 0; border-radius: 99px; background: var(--line); transition: .15s; }
+  .sw i::after { content: ''; position: absolute; left: 3px; top: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; transition: .15s; }
+  .sw input:checked + i { background: var(--btn); }
+  .sw input:checked + i::after { transform: translateX(20px); }
+  .days { display: flex; gap: 4px; }
+  .days button { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 13px; }
+  .days button.on { background: var(--btn); color: var(--btn-text); border-color: var(--btn); }
+  .hol { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; }
+  .hol button { border: 0; background: var(--bg2); color: var(--text); border-radius: 50%; width: 28px; height: 28px; }
+  .group-title { margin: 18px 16px 4px; font-weight: 600; }
+  .err { margin: 8px 16px; padding: 10px 12px; border-radius: 10px; background: #fdecec; color: #8a1f1f; font-size: 14px; white-space: pre-line; }
+  .hlink { background: none; border: 0; color: var(--link); font: inherit; padding: 0; }
   .busy .slow { margin-top: 18px; color: var(--hint); font-size: 13px; opacity: 0; transition: opacity .4s; }
 </style>
 </head>
@@ -150,6 +171,7 @@
 
   // Organiser views, opened from /shops in the private chat.
   if (qs.get('view') === 'shops') { adminShops(); return; }
+  if (qs.get('view') === 'settings') { adminSettings(); return; }
 
   try { var cached = JSON.parse(localStorage.getItem(cacheKey()) || 'null'); if (cached) { S.data = cached; S.cart = (cached.mine || []).slice(); render(); } } catch (e) {}
 
@@ -169,33 +191,33 @@
     if (fn) { tg.__obBack = fn; tg.BackButton.onClick(fn); tg.BackButton.show(); } else tg.BackButton.hide();
   }
 
+  function dropBar() { var b = document.querySelector('.bar'); if (b) b.remove(); }
+
   function adminShops() {
-    back(null);
+    back(null); dropBar();
     document.body.style.paddingBottom = '24px';
     api({ op: 'shops' }).then(function (d) {
       if (!d.ok) return screen('🔒', 'Not available', d.error || '');
       app.innerHTML = '';
       var has = d.shops.filter(function (s) { return s.items; }).length;
       app.appendChild(h('header', null, h('h1', { text: 'Your shops' }),
-        h('div', { cls: 'sub', text: has + ' of ' + d.shops.length + ' have a menu · tap one to review it' })));
+        h('div', { cls: 'sub' }, has + ' of ' + d.shops.length + ' have a menu · tap one to review or edit · ',
+          h('button', { cls: 'hlink', text: '⚙️ Settings', onclick: adminSettings }))));
       var kindIcon = { coffee: '☕', lunch: '🍱', both: '☕🍱' };
       d.shops.forEach(function (sh) {
-        app.appendChild(h('div', { cls: 'shop', onclick: function () {
-            if (sh.items) adminPreview(sh.id);
-            else toast('No menu yet — open the shop\'s link in a browser and run the 📋 bookmark.');
-          } },
+        app.appendChild(h('div', { cls: 'shop' + (sh.active ? '' : ' hid'), onclick: function () { adminPreview(sh.id); } },
           h('div', { cls: 'info' },
             h('div', { cls: 'name', text: (kindIcon[sh.kind] || '') + ' ' + sh.name + (sh.active ? '' : ' (paused)') }),
             h('div', { cls: 'meta', text: sh.id + ' · ' + sh.app })),
           sh.items ? h('span', { cls: 'badge ok', text: sh.items + ' items' + (sh.hidden ? ' · ' + sh.hidden + ' hidden' : '') })
                    : h('span', { cls: 'badge', text: 'no menu' }),
-          sh.items ? h('span', { cls: 'go', text: '›' }) : null));
+          h('span', { cls: 'go', text: '›' })));
       });
     }).catch(function () { screen('📶', 'No connection', 'Try again.'); });
   }
 
   function adminPreview(id) {
-    back(adminShops);
+    back(adminShops); dropBar();
     app.innerHTML = '<div class="skel"></div><div class="skel"></div><div class="skel"></div>';
     window.scrollTo(0, 0);
     api({ op: 'preview', shop: id }).then(function (d) {
@@ -205,7 +227,13 @@
       var shown = d.menu.filter(function (m) { return m.available; }).length;
       var sub = h('div', { cls: 'sub', text: d.shop.app + ' · ' + shown + ' shown' + (d.menu.length > shown ? ', ' + (d.menu.length - shown) + ' hidden' : '') +
                                              (d.shop.at ? ' · imported ' + d.shop.at : '') });
-      app.appendChild(h('header', null, h('h1', { text: d.shop.name }), sub));
+      var title = h('h1', { text: d.shop.name });
+      app.appendChild(h('header', null, title, sub));
+      app.appendChild(shopEditor(d.shop, function (name) { title.textContent = name; }));
+      if (!d.menu.length) {
+        app.appendChild(h('div', { cls: 'center muted', text: 'No menu imported yet. Open this shop\'s share link in a browser and run the 📋 bookmark. Until then the team browses in the app and types their order.' }));
+        return;
+      }
       app.appendChild(h('div', { cls: 'banner', text: '👀 The team sees this menu without the greyed-out items. Tap Hide or Show — it\'s saved straight away.' }));
       app.appendChild(h('div', { cls: 'section' }, h('input', { cls: 'search', type: 'search', placeholder: 'Search this menu',
         oninput: function (e) { filter = e.target.value.trim().toLowerCase(); draw(); } })));
@@ -247,6 +275,146 @@
         });
       }
       draw();
+    }).catch(function () { screen('📶', 'No connection', 'Try again.'); });
+  }
+
+  function sw(checked, onchange) {
+    var inp = h('input', { type: 'checkbox' });
+    inp.checked = !!checked;
+    if (onchange) inp.onchange = function () { onchange(inp.checked); };
+    return { el: h('label', { cls: 'sw' }, inp, h('i')), input: inp };
+  }
+
+  /** Name, coffee/lunch, on/off for one shop. */
+  function shopEditor(shop, onRenamed) {
+    var name = h('input', { type: 'text', cls: 'wide', value: shop.name });
+    var kind = shop.kind;
+    var seg = h('div', { cls: 'opts' }, ['coffee', 'lunch', 'both'].map(function (k) {
+      return h('button', { cls: 'chip' + (kind === k ? ' on' : ''), text: { coffee: '☕ Coffee', lunch: '🍱 Lunch', both: 'Both' }[k],
+        onclick: function () { kind = k; [].forEach.call(seg.children, function (b, i) { b.classList.toggle('on', ['coffee', 'lunch', 'both'][i] === k); }); } });
+    }));
+    var on = sw(shop.active !== false);
+    var save = h('button', { cls: 'btn', style: 'width:100%;margin-top:10px', text: 'Save shop' });
+    var err = h('div');
+    save.onclick = function () {
+      err.innerHTML = '';
+      var stop = busy('Saving…');
+      api({ op: 'shop_save', shop: shop.id, name: name.value, kind: kind, active: on.input.checked }).then(function (r) {
+        stop();
+        if (!r.ok) { err.appendChild(h('div', { cls: 'err', text: r.error })); return; }
+        haptic('ok');
+        shop.name = name.value.trim(); onRenamed(shop.name);
+        toast(r.changed.length ? 'Saved ✓' : 'Nothing changed');
+      }).catch(function () { stop(); err.appendChild(h('div', { cls: 'err', text: 'No connection — not saved.' })); });
+    };
+    return h('div', { cls: 'form' },
+      h('div', { cls: 'fl' }, h('span', { text: 'Name' }), name),
+      h('div', { cls: 'fl' }, h('span', { text: 'Used for' }), seg),
+      h('div', { cls: 'fl' }, h('span', null, 'Show in my pick list', h('div', { cls: 'muted', style: 'font-size:12px', text: 'Off = hidden when you choose a shop; history is kept' })), on.el),
+      save, err);
+  }
+
+  function adminSettings() {
+    back(qs.get('view') === 'shops' ? adminShops : null);
+    window.scrollTo(0, 0);
+    app.innerHTML = '<div class="skel"></div><div class="skel"></div><div class="skel"></div>';
+    api({ op: 'settings_get' }).then(function (d) {
+      if (!d.ok) return screen('🔒', 'Not available', d.error || '');
+      var v = d.values, hol = (d.holidays || []).slice();
+      app.innerHTML = '';
+      document.body.style.paddingBottom = '96px';
+      app.appendChild(h('header', null, h('h1', { text: '⚙️ Settings' }),
+        h('div', { cls: 'sub', text: 'Changes apply from the next round.' })));
+
+      function timeRow(label, key) {
+        var t = h('input', { type: 'time', value: v[key] || '' });
+        t.oninput = function () { v[key] = t.value; };
+        return h('div', { cls: 'fl' }, h('span', { text: label }), t);
+      }
+      function round(K, icon, title) {
+        var s1 = sw(/^true$/i.test(v[K + '_ENABLED']), function (c) { v[K + '_ENABLED'] = c ? 'TRUE' : 'FALSE'; });
+        return [h('div', { cls: 'group-title', text: icon + ' ' + title }),
+          h('div', { cls: 'form' },
+            h('div', { cls: 'fl' }, h('span', { text: 'Run this round on workdays' }), s1.el),
+            timeRow('Ask me to pick the shop', K + '_ASK'),
+            timeRow('Remind the team', K + '_NUDGE'),
+            timeRow('Cut-off', K + '_CUTOFF'))];
+      }
+      round('COFFEE', '☕', 'Coffee').forEach(function (x) { app.appendChild(x); });
+      round('LUNCH', '🍱', 'Lunch').forEach(function (x) { app.appendChild(x); });
+
+      // workdays
+      var wd = String(v.WORKDAYS || '').split(',').map(Number);
+      var days = h('div', { cls: 'days' }, ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map(function (l, i) {
+        var b = h('button', { cls: wd.indexOf(i + 1) > -1 ? 'on' : '', text: l });
+        b.onclick = function () {
+          var n = i + 1, at = wd.indexOf(n);
+          if (at > -1) wd.splice(at, 1); else wd.push(n);
+          b.classList.toggle('on', at === -1);
+          v.WORKDAYS = wd.sort().join(',');
+        };
+        return b;
+      }));
+      app.appendChild(h('div', { cls: 'group-title', text: '📅 Days' }));
+      var holBox = h('div');
+      var addDate = h('input', { type: 'date' });
+      function drawHol() {
+        holBox.innerHTML = '';
+        if (!hol.length) holBox.appendChild(h('div', { cls: 'muted', style: 'font-size:14px;padding:6px 0', text: 'No days off planned.' }));
+        hol.forEach(function (dte, i) {
+          var nice = new Date(dte + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+          holBox.appendChild(h('div', { cls: 'hol' }, h('span', { text: nice }),
+            h('button', { text: '×', 'aria-label': 'Remove', onclick: function () { hol.splice(i, 1); drawHol(); } })));
+        });
+      }
+      drawHol();
+      app.appendChild(h('div', { cls: 'form' },
+        h('div', { cls: 'fl' }, h('span', { text: 'Workdays' }), days),
+        h('div', { style: 'padding:10px 0 0' }, h('div', { text: 'Days off (holidays, leave)' }), holBox,
+          h('div', { cls: 'fl', style: 'border:0' }, addDate,
+            h('button', { cls: 'btn ghost', text: 'Add', onclick: function () {
+              if (!addDate.value) return toast('Pick a date first.');
+              if (hol.indexOf(addDate.value) === -1) hol.push(addDate.value);
+              hol.sort(); addDate.value = ''; drawHol();
+            } })))));
+
+      // behaviour
+      var remind = h('input', { type: 'number', min: 1, max: 120, value: v.PICK_REMIND_MIN, placeholder: 'off' });
+      remind.oninput = function () { v.PICK_REMIND_MIN = remind.value; };
+      var minOrd = h('input', { type: 'number', min: 1, max: 120, value: v.MIN_ORDER_MIN });
+      minOrd.oninput = function () { v.MIN_ORDER_MIN = minOrd.value; };
+      var show = h('select', null, [['items', 'Who + what they ordered'], ['names', 'Only who ordered'], ['count', 'Only how many']].map(function (o) {
+        var e = h('option', { value: o[0], text: o[1] }); if (v.SHOW_ORDERS === o[0]) e.selected = true; return e;
+      }));
+      show.onchange = function () { v.SHOW_ORDERS = show.value; };
+      var late = h('select', null, [['ask', 'Ask me to approve'], ['no', 'Refuse']].map(function (o) {
+        var e = h('option', { value: o[0], text: o[1] }); if (v.LATE_ORDERS === o[0]) e.selected = true; return e;
+      }));
+      late.onchange = function () { v.LATE_ORDERS = late.value; };
+      var sugar = h('input', { type: 'text', value: String(v.SUGAR_LEVELS || '').replace(/,/g, ', '), inputmode: 'numeric' });
+      sugar.oninput = function () { v.SUGAR_LEVELS = sugar.value; };
+      app.appendChild(h('div', { cls: 'group-title', text: '🔧 How it behaves' }));
+      app.appendChild(h('div', { cls: 'form' },
+        h('div', { cls: 'fl' }, h('span', null, 'Remind me to pick after (min)', h('div', { cls: 'muted', style: 'font-size:12px', text: 'Blank = no reminder' })), remind),
+        h('div', { cls: 'fl' }, h('span', { text: 'Team always gets at least (min)' }), minOrd),
+        h('div', { cls: 'fl' }, h('span', { text: 'Team sees in the group' }), show),
+        h('div', { cls: 'fl' }, h('span', { text: 'Orders after cut-off' }), late),
+        h('div', { cls: 'fl' }, h('span', { text: 'Sugar buttons (%)' }), sugar)));
+
+      var err = h('div');
+      app.appendChild(err);
+      var bar = h('div', { cls: 'bar' }, h('button', { cls: 'btn', text: 'Save settings', onclick: function () {
+        err.innerHTML = '';
+        var stop = busy('Saving settings…');
+        api({ op: 'settings_save', values: v, holidays: hol }).then(function (r) {
+          stop();
+          if (!r.ok) { err.appendChild(h('div', { cls: 'err', text: r.error })); err.scrollIntoView({ behavior: 'smooth' }); haptic(); return; }
+          haptic('ok');
+          toast(r.changed.length ? 'Saved ✓ — ' + r.changed.length + ' change' + (r.changed.length > 1 ? 's' : '') : 'Nothing changed');
+        }).catch(function () { stop(); err.appendChild(h('div', { cls: 'err', text: 'No connection — not saved.' })); });
+      } }));
+      var old = document.querySelector('.bar'); if (old) old.remove();
+      document.body.appendChild(bar);
     }).catch(function () { screen('📶', 'No connection', 'Try again.'); });
   }
 
