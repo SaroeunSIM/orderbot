@@ -76,6 +76,15 @@
           animation: spin .8s linear infinite; margin-bottom: 18px; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .busy .lines { margin-top: 10px; color: var(--hint); font-size: 14px; }
+  .shop { display: flex; gap: 12px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .shop .info { flex: 1; min-width: 0; }
+  .shop .meta { color: var(--hint); font-size: 13px; }
+  .shop .go { color: var(--hint); font-size: 20px; }
+  .badge { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--bg2); color: var(--hint); }
+  .badge.ok { background: color-mix(in srgb, var(--btn) 15%, transparent); color: var(--btn); }
+  .item.hid { opacity: .45; }
+  .tog { flex: none; border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 99px; padding: 6px 12px; font: inherit; font-size: 13px; }
+  .tog.hide { color: #c0392b; }
   .busy .slow { margin-top: 18px; color: var(--hint); font-size: 13px; opacity: 0; transition: opacity .4s; }
 </style>
 </head>
@@ -139,6 +148,9 @@
   if (!API || /PASTE_/.test(API)) { return screen('⚙️', 'Setup needed', 'Put your web app URL in config.js.'); }
   if (!initData) { return screen('📱', 'Open this from Telegram', 'Tap ✏️ Order on the round message in your team group.'); }
 
+  // Organiser views, opened from /shops in the private chat.
+  if (qs.get('view') === 'shops') { adminShops(); return; }
+
   try { var cached = JSON.parse(localStorage.getItem(cacheKey()) || 'null'); if (cached) { S.data = cached; S.cart = (cached.mine || []).slice(); render(); } } catch (e) {}
 
   api({ op: 'load' }).then(function (d) {
@@ -149,6 +161,94 @@
     try { localStorage.setItem(cacheKey(), JSON.stringify(d)); } catch (e) {}
     render();
   }).catch(function () { if (!S.data) screen('📶', 'No connection', 'Check your internet and reopen the menu.'); });
+
+  // ---------- organiser: shops and menu review ------------------------------
+  function back(fn) {
+    if (!tg || !tg.BackButton) return;
+    tg.BackButton.offClick(tg.__obBack || function () {});
+    if (fn) { tg.__obBack = fn; tg.BackButton.onClick(fn); tg.BackButton.show(); } else tg.BackButton.hide();
+  }
+
+  function adminShops() {
+    back(null);
+    document.body.style.paddingBottom = '24px';
+    api({ op: 'shops' }).then(function (d) {
+      if (!d.ok) return screen('🔒', 'Not available', d.error || '');
+      app.innerHTML = '';
+      var has = d.shops.filter(function (s) { return s.items; }).length;
+      app.appendChild(h('header', null, h('h1', { text: 'Your shops' }),
+        h('div', { cls: 'sub', text: has + ' of ' + d.shops.length + ' have a menu · tap one to review it' })));
+      var kindIcon = { coffee: '☕', lunch: '🍱', both: '☕🍱' };
+      d.shops.forEach(function (sh) {
+        app.appendChild(h('div', { cls: 'shop', onclick: function () {
+            if (sh.items) adminPreview(sh.id);
+            else toast('No menu yet — open the shop\'s link in a browser and run the 📋 bookmark.');
+          } },
+          h('div', { cls: 'info' },
+            h('div', { cls: 'name', text: (kindIcon[sh.kind] || '') + ' ' + sh.name + (sh.active ? '' : ' (paused)') }),
+            h('div', { cls: 'meta', text: sh.id + ' · ' + sh.app })),
+          sh.items ? h('span', { cls: 'badge ok', text: sh.items + ' items' + (sh.hidden ? ' · ' + sh.hidden + ' hidden' : '') })
+                   : h('span', { cls: 'badge', text: 'no menu' }),
+          sh.items ? h('span', { cls: 'go', text: '›' }) : null));
+      });
+    }).catch(function () { screen('📶', 'No connection', 'Try again.'); });
+  }
+
+  function adminPreview(id) {
+    back(adminShops);
+    app.innerHTML = '<div class="skel"></div><div class="skel"></div><div class="skel"></div>';
+    window.scrollTo(0, 0);
+    api({ op: 'preview', shop: id }).then(function (d) {
+      if (!d.ok) return screen('⚠️', 'Could not load', d.error || '');
+      var filter = '';
+      app.innerHTML = '';
+      var shown = d.menu.filter(function (m) { return m.available; }).length;
+      var sub = h('div', { cls: 'sub', text: d.shop.app + ' · ' + shown + ' shown' + (d.menu.length > shown ? ', ' + (d.menu.length - shown) + ' hidden' : '') +
+                                             (d.shop.at ? ' · imported ' + d.shop.at : '') });
+      app.appendChild(h('header', null, h('h1', { text: d.shop.name }), sub));
+      app.appendChild(h('div', { cls: 'banner', text: '👀 The team sees this menu without the greyed-out items. Tap Hide or Show — it\'s saved straight away.' }));
+      app.appendChild(h('div', { cls: 'section' }, h('input', { cls: 'search', type: 'search', placeholder: 'Search this menu',
+        oninput: function (e) { filter = e.target.value.trim().toLowerCase(); draw(); } })));
+      var box = h('div');
+      app.appendChild(box);
+      function draw() {
+        box.innerHTML = '';
+        var cats = [];
+        d.menu.forEach(function (m) { if (cats.indexOf(m.cat) === -1) cats.push(m.cat); });
+        cats.forEach(function (c) {
+          var items = d.menu.filter(function (m) { return m.cat === c && (!filter || m.name.toLowerCase().indexOf(filter) > -1); });
+          if (!items.length) return;
+          box.appendChild(h('div', { cls: 'cat-title', text: c }));
+          items.forEach(function (m) {
+            var tog = h('button', { cls: 'tog' + (m.available ? ' hide' : ''), text: m.available ? 'Hide' : 'Show' });
+            var row = h('div', { cls: 'item' + (m.available ? '' : ' hid') },
+              m.img ? h('img', { src: m.img, loading: 'lazy', alt: '' }) : h('div', { cls: 'ph' }),
+              h('div', { cls: 'info' }, h('div', { cls: 'name', text: m.name }),
+                h('div', { cls: 'price' }, money(m.price, m.cur), m.was && m.was > m.price ? h('s', { text: money(m.was, m.cur) }) : null),
+                m.opts && m.opts.length ? h('div', { cls: 'desc', text: m.opts.map(function (o) { return o.group; }).join(' · ') }) : null),
+              tog);
+            tog.onclick = function () {
+              var want = !m.available;
+              m.available = want;                       // show the change at once; undo if saving fails
+              row.classList.toggle('hid', !want); tog.textContent = want ? 'Hide' : 'Show'; tog.classList.toggle('hide', want);
+              haptic();
+              api({ op: 'toggle', item: m.id, available: want }).then(function (r) {
+                if (!r.ok) throw new Error(r.error);
+                var n = d.menu.filter(function (x) { return x.available; }).length;
+                sub.textContent = d.shop.app + ' · ' + n + ' shown' + (d.menu.length > n ? ', ' + (d.menu.length - n) + ' hidden' : '') + (d.shop.at ? ' · imported ' + d.shop.at : '');
+              }).catch(function (e) {
+                m.available = !want;
+                row.classList.toggle('hid', want); tog.textContent = !want ? 'Hide' : 'Show'; tog.classList.toggle('hide', !want);
+                toast('Not saved: ' + (e.message || 'no connection'));
+              });
+            };
+            box.appendChild(row);
+          });
+        });
+      }
+      draw();
+    }).catch(function () { screen('📶', 'No connection', 'Try again.'); });
+  }
 
   // ---------- screens -------------------------------------------------------
   function screen(icon, title, msg, extra) {
