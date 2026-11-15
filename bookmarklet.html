@@ -27,6 +27,14 @@
   <p class="muted">Can't drag? Right-click the bookmarks bar → <b>Add page…</b>, name it <i>Send menu to Order Bot</i>, and paste this as the URL:</p>
   <textarea id="code" readonly></textarea>
   <button id="copy">Copy</button>
+  <h3>On iPhone (Safari)</h3>
+  <ol>
+    <li>On this page, tap <b>Copy</b> below the grey box.</li>
+    <li>Tap <b>Share</b> (the square with an arrow) → <b>Add Bookmark</b> → <b>Save</b>.</li>
+    <li>Tap the <b>Bookmarks</b> icon (open book) → <b>Edit</b> → tap the bookmark you just saved.</li>
+    <li>Rename it <i>Send menu to Order Bot</i>. Clear the address field, <b>paste</b>, then tap <b>Done</b>.</li>
+  </ol>
+  <p class="muted">To use it: copy the shop's share link and <b>paste it into Safari's address bar</b> (tapping the link in Telegram would open the Grab app instead). When the menu shows, tap the address bar, type <i>Send menu</i>, and tap the bookmark in the list. Keep the screen on while it reads.</p>
   <h3>Use</h3>
   <ol>
     <li>Open the shop's share link in Chrome (from Grab or E-Get → Share → Copy link). It opens the shop's web page.</li>
@@ -272,7 +280,15 @@
   document.getElementById('bm').onclick = function (e) { e.preventDefault(); alert('Drag this button to your bookmarks bar — clicking it here does nothing.'); };
   document.getElementById('code').value = href;
   document.getElementById('copy').onclick = function () {
-    var t = document.getElementById('code'); t.select(); document.execCommand('copy'); this.textContent = 'Copied ✓';
+    var btn = this, t = document.getElementById('code');
+    var done = function () { btn.textContent = 'Copied ✓'; };
+    var old = function () {                             // older Safari: select the text and copy
+      t.removeAttribute('readonly'); t.focus(); t.setSelectionRange(0, t.value.length);
+      try { document.execCommand('copy'); done(); } catch (e) { btn.textContent = 'Select the text and copy it'; }
+      t.setAttribute('readonly', '');
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t.value).then(done, old);
+    else old();
   };
 })();
 </script>
