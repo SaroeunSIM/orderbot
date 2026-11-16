@@ -155,6 +155,7 @@
     if (l.sugar !== '' && l.sugar != null) b.push(l.sugar + '%');
     if (l.ice) b.push(l.ice);
     if (l.opts) b.push(l.opts);
+    if (l.part) { var pp = String(l.part).split('of'); b.push(Number(pp[0]) >= Number(pp[1]) ? 'whole offer' : pp[0] + ' of ' + pp[1]); }
     if (l.note) b.push('“' + l.note + '”');
     return b.join(' · ');
   }
@@ -519,7 +520,10 @@
           m.img ? h('img', { src: m.img, loading: 'lazy', alt: '' }) : h('div', { cls: 'ph' }),
           h('div', { cls: 'info' }, h('div', { cls: 'name', text: m.name }),
             m.desc && m.desc !== m.name ? h('div', { cls: 'desc', text: m.desc }) : null,
-            h('div', { cls: 'price' }, money(m.price, m.cur), m.was && m.was > m.price ? h('s', { text: money(m.was, m.cur) }) : null)),
+            m.bundle > 1
+              ? h('div', { cls: 'price' }, money(m.price / m.bundle, m.cur) + ' each · offer for ' + m.bundle)
+              : h('div', { cls: 'price' }, money(m.price, m.cur), m.was && m.was > m.price ? h('s', { text: money(m.was, m.cur) }) : null),
+            m.bundle > 1 && m.open ? h('div', { cls: 'desc', style: 'color:var(--link)', text: '🤝 ' + m.open.names.join(', ') + ' needs ' + m.open.need + ' more — join in' }) : null),
           h('button', { cls: 'add', text: '+', 'aria-label': 'Add ' + m.name })));
       });
     });
@@ -534,10 +538,17 @@
     var hasIce = groups.some(function (g) { return /ice|hot|temp|ទឹកកក/i.test(g.group); });
     if (coffee && !hasSugar) groups.push({ group: 'Sugar', choices: d.sugar.map(function (s) { return s + '%'; }), _sugar: true });
     if (coffee && !hasIce) groups.push({ group: 'Ice', choices: ['Ice', 'Less ice', 'Hot', 'No ice'], _ice: true });
+    var bn = m.bundle > 1 ? m.bundle : 0;
+    if (bn) groups.unshift({ group: 'Offer for ' + bn, choices: ['Join · 1 share', 'All ' + bn + ' for me'], _part: true });
     var picked = {}, qty = 1;
+    if (bn) picked[0] = ['Join · 1 share'];
     var note = h('input', { cls: 'note', placeholder: 'Note for the shop (optional)' });
     var addBtn = h('button', { cls: 'btn', style: 'width:100%' });
-    function label() { addBtn.textContent = 'Add' + (qty > 1 ? ' ' + qty : '') + (m.price ? ' · ' + money(m.price * qty, m.cur) : ''); }
+    function take() { return bn ? ((picked[0] || [])[0] === 'All ' + bn + ' for me' ? bn : 1) : 0; }
+    function label() {
+      addBtn.textContent = bn ? 'Add · ' + money(m.price / bn * take(), m.cur)
+        : 'Add' + (qty > 1 ? ' ' + qty : '') + (m.price ? ' · ' + money(m.price * qty, m.cur) : '');
+    }
     var qtyTxt = h('b', { text: '1' });
     var bg = h('div', { cls: 'sheet-bg', onclick: function (e) { if (e.target === bg) bg.remove(); } },
       h('div', { cls: 'sheet' },
@@ -549,22 +560,25 @@
             var b = h('button', { cls: 'chip', text: c, onclick: function () {
               var cur = picked[gi] || [];
               if (g.multi) { var i = cur.indexOf(c); if (i > -1) cur.splice(i, 1); else cur.push(c); picked[gi] = cur; }
+              else if (g._part) picked[gi] = [c];
               else picked[gi] = (cur[0] === c) ? [] : [c];
               [].forEach.call(b.parentNode.children, function (x) { x.classList.toggle('on', (picked[gi] || []).indexOf(x.textContent) > -1); });
-              haptic();
+              haptic(); label();
             } });
+            if (g._part && c === 'Join · 1 share') b.classList.add('on');
             return b;
           })));
         }),
+        bn ? h('div', { cls: 'muted', style: 'font-size:13px;margin:12px 0', text: 'The offer only works when ' + bn + ' drinks are ordered together. If nobody joins by cut-off, you\'ll be asked to pick again.' }) :
         h('div', { cls: 'qty' }, h('button', { text: '−', onclick: function () { qty = Math.max(1, qty - 1); qtyTxt.textContent = qty; label(); } }),
           qtyTxt, h('button', { text: '+', onclick: function () { qty = Math.min(20, qty + 1); qtyTxt.textContent = qty; label(); } })),
         note, h('div', { style: 'height:12px' }), addBtn));
     addBtn.onclick = function () {
-      var line = { id: m.id, item: m.name, qty: qty, sugar: '', ice: '', opts: '', note: note.value.trim(), price: m.price, cur: m.cur };
+      var line = { id: m.id, item: m.name, qty: bn ? 1 : qty, sugar: '', ice: '', opts: '', note: note.value.trim(), price: bn ? m.price / bn * take() : m.price, cur: m.cur, part: bn ? take() + 'of' + bn : '' };
       var extra = [];
       groups.forEach(function (g, gi) {
         var v = picked[gi] || [];
-        if (!v.length) return;
+        if (!v.length || g._part) return;
         if (g._sugar || /sugar|sweet|ស្ករ/i.test(g.group)) {
           var n = String(v[0]).match(/\d+/); line.sugar = n ? Number(n[0]) : ''; if (!n) extra.push(v[0]);
         } else if (g._ice || /ice|hot|temp|ទឹកកក/i.test(g.group)) line.ice = String(v[0]).toLowerCase();
@@ -618,7 +632,7 @@
     haptic();
     var stop = busy(skip ? 'Skipping today…' : S.data.mode === 'late' ? 'Sending for approval…' : 'Sending your order…', skip ? [] : S.cart);
     api({ op: 'submit', skip: !!skip, lines: S.cart.map(function (l) {
-      return { id: l.id || '', item: l.item, qty: l.qty || 1, sugar: l.sugar, ice: l.ice, opts: l.opts, note: l.note, custom: !!l.custom };
+      return { id: l.id || '', item: l.item, qty: l.qty || 1, sugar: l.sugar, ice: l.ice, opts: l.opts, note: l.note, part: l.part || '', custom: !!l.custom };
     }) }).then(function (r) {
       S.sending = false;
       stop();
