@@ -112,7 +112,7 @@
       S.shopId = r.match || 'new';
       var m = S.shops.filter(function (s) { return s.id === S.shopId; })[0];
       if (m) { S.name = m.name; S.kind = m.kind; }
-      render();
+      if (m) quick(m); else render();             // a shop you already have: one tap to update
     }).catch(function () { main.innerHTML = '<div class="card err">Could not reach your bot. Check config.js and your connection.</div>'; });
   }
 
@@ -172,6 +172,22 @@
     count();
   }
 
+  /** A shop already in your list: update in one tap, or open the full review. */
+  function quick(m) {
+    var sold = allSold ? 0 : data.items.filter(function (i) { return i._sold; }).length;
+    main.innerHTML = '<div class="card"><h1>' + esc(m.name) + '</h1>' +
+      '<div class="muted">' + esc(data.app) + ' · ' + data.items.length + ' items read' + (sold ? ' · ' + sold + ' sold out' : '') +
+      (m.menu_count ? ' · replaces the menu you have (' + m.menu_count + ' items)' : '') + '</div>' +
+      '<div class="muted" style="margin-top:10px;font-size:14px">You\'ll get a Telegram message listing what changed — new deals, price changes, deals that ended.</div>' +
+      '<p style="margin:14px 0 0"><a href="#" id="full">Review items first</a> · <a href="#" id="other">Save to a different shop</a></p></div>';
+    document.getElementById('full').onclick = function (e) { e.preventDefault(); render(); };
+    document.getElementById('other').onclick = function (e) { e.preventDefault(); render(); document.getElementById('shop').focus(); };
+    bar.style.display = 'block';
+    var go = document.getElementById('go');
+    go.disabled = false;
+    go.textContent = 'Update menu now';
+  }
+
   function count() {
     var n = data.items.filter(function (i) { return i._on; }).length;
     var go = document.getElementById('go');
@@ -194,7 +210,9 @@
         if (!r.ok) throw new Error(r.error || 'Import failed');
         btn.textContent = 'Imported ✓';
         out.innerHTML = '<div class="ok"><b>' + esc(r.shop_name) + '</b> — ' + r.count + ' items saved' +
-          (r.new_shop ? ' as a new shop (' + esc(r.shop_id) + ')' : '') + '. You can close this tab.</div>';
+          (r.new_shop ? ' as a new shop (' + esc(r.shop_id) + ')' : '') + '.' +
+          (r.changes && r.changes.length ? '<br>' + r.changes.map(esc).join('<br>') : '') +
+          '<br>You can close this tab.</div>';
       })
       .catch(function (e) { btn.disabled = false; count(); out.innerHTML = '<div class="err">' + esc(e.message || e) + '</div>'; });
   };
