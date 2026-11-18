@@ -42,6 +42,8 @@
     say('<b>' + esc(data.shop_name) + '</b><br>' + data.items.length + ' items · ' +
         Object.keys(data.items.reduce(function (a, i) { a[i.category] = 1; return a; }, {})).length + ' categories' +
         (opts ? ' · ' + opts + ' with options' : '') + (sold ? ' · ' + sold + ' sold out' : '') +
+        (data.app === 'Grab' && /\/en\//.test(location.pathname)
+          ? '<br><a href="' + location.pathname.replace('/en/', '/km/') + '" style="color:#0a66c2">ភាសាខ្មែរ — open the Khmer page</a> and run me again there to add Khmer names.' : '') +
         '<br><button id="obsend" style="margin-top:10px;width:100%;padding:9px;border:0;border-radius:8px;' +
         'background:#111;color:#fff;font:inherit;cursor:pointer">Send to Order Bot</button>' +
         '<div style="margin-top:6px;text-align:right"><a href="#" id="obclose" style="color:#666">Close</a></div>');
