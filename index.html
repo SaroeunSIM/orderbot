@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>Order</title>
+<!-- Open the connection to Google while the page is still loading. -->
+<link rel="preconnect" href="https://script.google.com" crossorigin>
+<link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="config.js"></script>
 <style>
@@ -68,7 +71,17 @@
   .center .big { font-size: 40px; }
   .muted { color: var(--hint); }
   .toast { position: fixed; left: 16px; right: 16px; bottom: 110px; background: #333; color: #fff; padding: 10px 14px; border-radius: 10px; z-index: 50; font-size: 14px; }
-  .skel { height: 64px; margin: 10px 16px; border-radius: 10px; background: var(--bg2); }
+  .skel { height: 64px; margin: 10px 16px; border-radius: 10px; background: var(--bg2); position: relative; overflow: hidden; }
+  .skel::after { content: ''; position: absolute; inset: 0; transform: translateX(-100%);
+                 background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--hint) 18%, transparent), transparent);
+                 animation: shimmer 1.1s infinite; }
+  @keyframes shimmer { to { transform: translateX(100%); } }
+  .boot { text-align: center; color: var(--hint); font-size: 14px; margin: 18px 16px 4px; }
+  .boot .slow { opacity: 0; transition: opacity .4s; margin-top: 6px; font-size: 13px; }
+  .loadbar { position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 70; overflow: hidden; background: transparent; }
+  .loadbar::after { content: ''; position: absolute; top: 0; bottom: 0; width: 35%; background: var(--btn);
+                    animation: slide 1s ease-in-out infinite; }
+  @keyframes slide { from { left: -35%; } to { left: 100%; } }
   .hidden { display: none !important; }
   .busy { position: fixed; inset: 0; z-index: 60; background: var(--bg); display: flex; flex-direction: column;
           align-items: center; justify-content: center; padding: 24px; text-align: center; }
@@ -110,14 +123,19 @@
 </style>
 </head>
 <body>
-<div id="app"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+<div id="app"><div class="boot">Opening the menu…<div class="slow" id="bootslow">Google is waking up the bot — a few more seconds.</div></div><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
 <script>
 (function () {
   var tg = window.Telegram && Telegram.WebApp;
   if (tg) { tg.ready(); tg.expand(); }
   var initData = tg ? tg.initData : '';
   var qs = new URLSearchParams(location.search);
-  var rid = (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) || qs.get('rid') || '';
+  // The group button carries "round_shop" (e.g. C-20261119_S1) so the menu can be
+  // drawn from this phone's saved copy before the server answers.
+  var start = String((tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) || '');
+  var rid = start.split('_')[0] || qs.get('rid') || '';
+  var shopHint = start.split('_')[1] || qs.get('shop') || '';
+  setTimeout(function () { var b = document.getElementById('bootslow'); if (b) b.style.opacity = 1; }, 3500);
   var API = window.OB_API;
   var app = document.getElementById('app');
 
@@ -165,6 +183,19 @@
       .then(function (r) { return r.json(); });
   }
   function cacheKey() { return 'ob_load_' + rid; }
+  function shopKey(id) { return 'ob_shop_' + id; }
+  function loading(on) {
+    var b = document.querySelector('.loadbar');
+    if (on && !b) document.body.appendChild(h('div', { cls: 'loadbar' }));
+    if (!on && b) b.remove();
+  }
+  /** Redraw without losing the scroll position or the search box focus. */
+  function rerender() {
+    var y = window.scrollY, typing = document.activeElement && document.activeElement.classList.contains('search');
+    render();
+    window.scrollTo(0, y);
+    if (typing) { var s = document.querySelector('.search'); if (s) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); } }
+  }
 
   // ---------- start ---------------------------------------------------------
   if (!API || /PASTE_/.test(API)) { return screen('⚙️', 'Setup needed', 'Put your web app URL in config.js.'); }
@@ -174,16 +205,47 @@
   if (qs.get('view') === 'shops') { adminShops(); return; }
   if (qs.get('view') === 'settings') { adminSettings(); return; }
 
-  try { var cached = JSON.parse(localStorage.getItem(cacheKey()) || 'null'); if (cached) { S.data = cached; S.cart = (cached.mine || []).slice(); render(); } } catch (e) {}
+  // 1. Draw at once from this phone's copy: this round as last seen, or else
+  //    the shop's menu from an earlier day. Sending waits for the real answer.
+  try {
+    Object.keys(localStorage).forEach(function (k) {            // drop other days' rounds
+      if (k.indexOf('ob_load_') === 0 && k !== cacheKey()) localStorage.removeItem(k);
+    });
+    var cached = JSON.parse(localStorage.getItem(cacheKey()) || 'null');
+    if (!cached && shopHint) {
+      var sm = JSON.parse(localStorage.getItem(shopKey(shopHint)) || 'null');
+      if (sm && sm.menu && sm.menu.length) cached = {
+        ok: true, mode: 'open', provisional: true,
+        round: { rid: rid, kind: rid.charAt(0) === 'L' ? 'lunch' : 'coffee', cutoff: '' },
+        shop: sm.shop, menu: sm.menu, sugar: sm.sugar, ice: sm.ice,
+        mine: [], last: [], friends: [], redo: [], popular: [], admin: ''
+      };
+    }
+    if (cached) {
+      cached.provisional = true;
+      S.data = cached; S.cart = (cached.mine || []).slice(); render();
+    }
+  } catch (e) {}
 
+  // 2. Ask the server; a thin bar at the top shows it's still checking.
+  loading(true);
   api({ op: 'load' }).then(function (d) {
+    loading(false);
     if (!d.ok) return screen('⚠️', 'Could not load', d.error || 'Try again.');
     var hadCart = S.data && S.cart.length;
     S.data = d;
     if (!hadCart) S.cart = (d.mine || []).slice();
-    try { localStorage.setItem(cacheKey(), JSON.stringify(d)); } catch (e) {}
-    render();
-  }).catch(function () { if (!S.data) screen('📶', 'No connection', 'Check your internet and reopen the menu.'); });
+    try {
+      localStorage.setItem(cacheKey(), JSON.stringify(d));
+      if (d.shop && d.shop.id && d.menu && d.menu.length) {
+        localStorage.setItem(shopKey(d.shop.id), JSON.stringify({ shop: d.shop, menu: d.menu, sugar: d.sugar, ice: d.ice }));
+      }
+    } catch (e) {}
+    rerender();
+  }).catch(function () {
+    loading(false);
+    if (!S.data || S.data.provisional) screen('📶', 'No connection', 'Check your internet and reopen the menu.');
+  });
 
   // ---------- organiser: shops and menu review ------------------------------
   function back(fn) {
@@ -438,7 +500,7 @@
     app.appendChild(h('header', null,
       h('h1', { text: shop.name || 'Today\'s order' }),
       h('div', { cls: 'sub' }, (shop.app ? shop.app + ' · ' : ''),
-        d.mode === 'open' ? 'order by ' + d.round.cutoff : '',
+        d.mode === 'open' ? (d.provisional ? 'checking today\'s order…' : 'order by ' + d.round.cutoff) : '',
         shop.url ? [' · ', h('a', { href: shop.url, target: '_blank', text: 'open in ' + (shop.app || 'app'), onclick: function (e) { if (tg) { e.preventDefault(); tg.openLink(shop.url); } } })] : null)));
 
     if (d.mode === 'redo') app.appendChild(h('div', { cls: 'banner', text: '😕 ' + d.redo.join(', ') + ' is not available. Please pick something else.' }));
@@ -608,8 +670,9 @@
       return h('div', { cls: 'cl' }, h('div', { cls: 't', text: lineText(l) }),
         h('button', { cls: 'x', text: '×', 'aria-label': 'Remove', onclick: function () { S.cart.splice(i, 1); drawBar(); } }));
     })));
-    bar.appendChild(h('button', { cls: 'btn', disabled: S.sending ? 'disabled' : null,
-      text: S.sending ? 'Sending…' : (S.data.mode === 'late' ? 'Send for approval' : 'Send order') + (total ? ' · ' + money(total, cur) : ''),
+    var wait = S.data.provisional;          // still checking with the server: you can pick, not send yet
+    bar.appendChild(h('button', { cls: 'btn', disabled: S.sending || wait ? 'disabled' : null,
+      text: S.sending ? 'Sending…' : wait ? 'One moment — checking today\'s order…' : (S.data.mode === 'late' ? 'Send for approval' : 'Send order') + (total ? ' · ' + money(total, cur) : ''),
       onclick: function () { send(false); } }));
   }
 
@@ -628,6 +691,7 @@
 
   function send(skip) {
     if (S.sending) return;
+    if (S.data && S.data.provisional) return toast('One moment — still checking today\'s order…');
     if (!skip && !S.cart.length) return toast('Add something first.');
     S.sending = true;
     haptic();
